@@ -1,249 +1,293 @@
 # PRD: Dashboard Survei Kepuasan Pemerintah Nasional
 
-**Version:** 1.0  
+**Version:** 1.1  
 **Author:** Haikal  
 **Last Updated:** April 2026  
 **Status:** In Development
 
 ---
 
+## Table of Contents
+1. [Overview](#1-overview)
+2. [Goals & Success Metrics](#2-goals--success-metrics)
+3. [Target Users](#3-target-users)
+4. [Product Features](#4-product-features)
+5. [UI/UX & Design Guidelines](#5-uiux--design-guidelines)
+6. [Tech Stack](#6-tech-stack)
+7. [Architecture & Data Flow](#7-architecture--data-flow)
+8. [Apps Script API](#8-apps-script-api)
+9. [Security & Privacy](#9-security--privacy)
+10. [File Structure](#10-file-structure)
+11. [Environment Variables](#11-environment-variables)
+12. [Setup Guide](#12-setup-guide)
+13. [Out of Scope (v1)](#13-out-of-scope-v1)
+14. [Known Limitations](#14-known-limitations)
+
+---
+
 ## 1. Overview
 
-Dashboard real-time untuk memvisualisasikan hasil survei kepuasan pemerintah nasional tingkat nasional. Data bersumber dari Google Form → Google Sheets → Google Apps Script API → Next.js dashboard.
+Dashboard real-time untuk memvisualisasikan hasil survei kepuasan pemerintah tingkat nasional. Data bersumber dari Google Form → Google Sheets → Google Apps Script API → Next.js dashboard.
 
-Sistem dirancang **dinamis** — tidak ada pertanyaan/kolom yang di-hardcode. Struktur chart otomatis menyesuaikan kolom yang ada di Google Sheet.
-
----
-
-## 2. Goals
-
-| # | Goal |
-|---|---|
-| G1 | Tampilkan hasil survei secara real-time tanpa reload manual |
-| G2 | Visualisasi dinamis berdasarkan struktur kolom Sheet (tidak hardcoded) |
-| G3 | Chart bisa di-download per-item (PNG) atau semua sekaligus (PDF) |
-| G4 | Data mentah bisa di-export sebagai CSV |
-| G5 | Akses hanya untuk surveyor yang terautentikasi |
+Sistem dirancang **dinamis** — tidak ada pertanyaan atau kolom survei yang di-hardcode. Struktur chart otomatis menyesuaikan tipe data pada kolom di Google Sheet secara cerdas.
 
 ---
 
-## 3. Users
+## 2. Goals & Success Metrics
 
-| Role | Akses | Auth |
+| # | Goal | Success Metric (KPI) |
 |---|---|---|
-| Surveyor | Login → lihat semua data & chart → download semua format | Username + Password |
-
-> v1 hanya support 1 akun surveyor. Multi-user management masuk v2.
+| G1 | Tampilkan hasil survei secara real-time tanpa reload manual | Fetch otomatis < 2 detik setelah interval 60s. |
+| G2 | Visualisasi dinamis berdasarkan struktur kolom Sheet | 100% chart otomatis ter-render untuk tipe kolom yang valid. |
+| G3 | Chart dan Data Report bisa diekspor | PNG dan PDF ter-generate < 3 detik per request. |
+| G4 | Insight langsung dari data | Selalu ada top 4 summary card (Total, Hari Ini, Trend). |
 
 ---
 
-## 4. Features
+## 3. Target Users
+
+| Role | Deskripsi | Akses | Auth Method |
+|---|---|---|---|
+| **Surveyor (Admin)** | Pengelola survei yang menganalisis sentimen masyarakat. | Akses penuh ke dashboard, filter data, ekspor laporan. | Username + Password |
+
+> [!NOTE]  
+> v1 dipusatkan untuk 1 akun surveyor (single-tenant). Manajemen multi-user dengan role berbeda akan diimplementasikan pada v2.
+
+---
+
+## 4. Product Features
 
 ### F1 — Authentication
-- Login page dengan form username + password
-- Session-based auth via NextAuth.js (Credentials provider)
-- Semua route `/dashboard/*` diproteksi via middleware
-- Unauthorized → redirect otomatis ke `/login`
-- Credentials disimpan di environment variable (tidak hardcoded)
+- Halaman login tertutup dengan form username + password.
+- Session-based authentication via NextAuth.js (Credentials provider).
+- Proteksi route `/dashboard/*` menggunakan sistem middleware Next.js.
+- Redirect otomatis ke `/login` bagi unauthenticated user.
 
 ### F2 — Dynamic Chart Rendering
-Apps Script mendeteksi tipe tiap kolom dari sampel 100 baris pertama, lalu return metadata. Frontend render chart sesuai tipe:
+Data fetch dari Apps Script menghasilkan metadata kolom hasil sampling 100 baris pertama. UI otomatis menyesuaikan:
 
-| Tipe Kolom | Contoh | Chart yang Dirender |
+| Deteksi Tipe (Server) | Kriteria | Render Frontend |
 |---|---|---|
-| `scale` | Rating 1–5, 1–10 | Bar chart (distribusi per nilai) |
-| `categorical` | Pilihan ganda, dropdown | Pie / Donut chart |
-| `timestamp` | Kolom Timestamp dari Form | Line chart (respons per hari) |
-| `numeric` | Angka bebas | Summary card (avg, min, max) |
-| `text` | Jawaban teks panjang | Di-skip (tidak divisualisasikan) |
+| `scale` | Angka 1-5 atau 1-10 | **Bar chart** (distribusi frekuensi responden) |
+| `categorical` | Pilihan ganda, dropdown (≤ 15 opsi) | **Donut/Pie chart** dengan legend |
+| `timestamp` | Datetime object | **Area/Line chart** (tren pengisian per hari) |
+| `numeric` | Angka bebas tanpa range tetap | **Summary Card** (Rata-rata, Min, Max) |
+| `text` | Paragraf panjang / string bervariasi | Disembunyikan divisualisasi (hanya masuk CSV) |
 
-### F3 — Summary Cards
-Selalu muncul di bagian atas dashboard:
-- **Total Responden** — total semua baris
-- **Hari Ini** — responden yang masuk hari ini
-- **Kemarin** — responden kemarin
-- **Trend** — persentase naik/turun vs kemarin
+### F3 — Executive Summary Cards
+Komponen statis di header dashboard:
+1. **Total Responden**: Akumulasi seluruh data.
+2. **Hari Ini**: Jumlah pengisian hari ini.
+3. **Kemarin**: Jumlah pengisian hari sebelumnya (sebagai baseline).
+4. **Trend**: Indikator persentase pertumbuhan naik/turun vs kemarin (Warna Hijau/Merah).
 
-### F4 — Auto-refresh
-- Data di-fetch ulang otomatis setiap **60 detik**
-- Indikator "Terakhir diperbarui: HH:MM:SS" selalu visible
-- Manual refresh button tersedia
+### F4 — Auto-Refresh & Synchronization
+- Background fetching **setiap 60 detik**.
+- Indikator "Terakhir diperbarui: HH:MM:SS" responsif di header.
+- Tombol integrasi *Manual Refresh*.
 
-### F5 — Export
-| Format | Scope | Trigger |
+### F5 — Data Export Options
+| Format | Cakupan | Trigger |
 |---|---|---|
-| PNG | Per-chart | Tombol download di setiap chart |
-| PDF | Semua chart sekaligus | Tombol di header |
-| CSV | Data mentah | Tombol di header |
+| **PNG** | Per-chart spesifik | Tombol di pojok kanan atas tiap card chart |
+| **PDF** | Laporan lengkap (semua chart) | Tombol 'Export PDF' global di header |
+| **CSV** | Data mentah tabular | Tombol 'Download CSV' global di header |
 
-### F6 — Filter
-- Filter by **date range** (date picker start–end)
-- Filter langsung mempengaruhi semua chart dan summary
+### F6 — Global Filtering
+- Date picker (Start Date - End Date).
+- Filter memicu sinkronisasi state ke seluruh sistem (Summary & Chart).
 
 ---
 
-## 5. Tech Stack
+## 5. UI/UX & Design Guidelines
 
-| Layer | Tech | Alasan |
-|---|---|---|
-| Frontend Framework | Next.js 14 (App Router) | Familier, deploy mudah di Vercel |
-| Styling | Tailwind CSS | Konsisten sama stack lain |
-| Charts | Recharts | React-native, customizable, ringan |
-| Auth | NextAuth.js v4 (Credentials) | Mudah setup, JWT session |
-| Backend / Data | Google Apps Script Web App | Zero-cost, langsung akses Sheets |
-| Export PNG | html2canvas | Capture DOM element jadi canvas |
-| Export PDF | jsPDF | Generate PDF dari canvas |
-| Deploy | Vercel | Auto-deploy dari GitHub |
+Untuk memastikan kesan *Premium* tingkat nasional, desain harus mengikuti aturan estetik modern:
+- **Tema (Theme)**: Mendukung Light dan Dark mode yang smooth.
+- **Palet Warna**: Menggunakan warna solid dan berwibawa khas pemerintah (seperti deep navy blue, emerald green, dan neutral zinc) tanpa terkesan kaku.
+- **Bentuk (Shapes)**: *Rounded corners* (radii sedang) dengan *subtle shadow* dan *glassmorphism* di elemen melayang (dropdown / nav).
+- **Tipografi**: Font modern sans-serif yang bersih (misalnya *Inter* atau *Outfit*).
+- **Animasi (Micro-interactions)**: Transisi halus di elemen interaktif, hover effect pada card dan chart tooltip.
 
 ---
 
-## 6. Data Flow
+## 6. Tech Stack
 
+| Layer | Dependency Utama | Alasan Pemilihan |
+|---|---|---|
+| **Frontend Foundation** | Next.js 14 (App Router) + React | Eksekusi cepat, optimal routing, dan performa tinggi. |
+| **Styling & UI** | Tailwind CSS + Lucide React | Konsistensi UI, stylings *utility-first*, ikon modern yang scalable. |
+| **Data Viz** | Recharts | Berbasis komponen React, ringan, dinamis, kustomisasi tinggi. |
+| **State & Fetch** | SWR / React Query | Handle caching, polling otomatis 60s, state sync. |
+| **Authentication** | NextAuth v4 | Standard industri React, proteksi mudah di App Router. |
+| **Backend/Bridge** | Google Apps Script (Web App) | *Zero cost*, langsung bridging Google Form tanpa DB eksternal. |
+| **Export Libs** | html2canvas + jsPDF | Standard untuk re-render elemen DOM menjadi asset statis. |
+| **Deployment** | Vercel | Seamless CI/CD dengan Next.js. |
+
+---
+
+## 7. Architecture & Data Flow
+
+```mermaid
+sequenceDiagram
+    participant User as Responden
+    participant Form as Google Form
+    participant Sheet as Google Sheets
+    participant GAS as Apps Script API
+    participant NextApi as Next.js API Proxy
+    participant App as Dashboard UI
+
+    User->>Form: Submit Survei
+    Form->>Sheet: Append Row Baru
+    App->>NextApi: Polling (Setiap 60 detik)
+    NextApi->>GAS: HTTP GET /exec?action=data
+    GAS->>Sheet: Read Spreadsheet
+    Sheet-->>GAS: Raw Rows + Tipe Kolom
+    GAS-->>NextApi: JSON Respon
+    NextApi-->>App: Return Data
+    App->>App: Render Recharts / Summary Cards
+    loop Export
+        App->>App: Recharts -> html2canvas -> jsPDF/PNG
+    end
 ```
-Google Form
-    ↓ (submit)
-Google Sheets (spreadsheet)
-    ↓ (Apps Script baca sheet)
-Apps Script Web App (REST-like API)
-    ↓ (Next.js API route proxy)
-Next.js /api/survey route
-    ↓ (client fetch)
-Dashboard (React components)
-    ↓
-Recharts → html2canvas → PNG/PDF export
-```
 
-> Next.js API route berfungsi sebagai proxy untuk menyembunyikan Apps Script URL dari client-side code.
+> [!NOTE]  
+> Next.js Server API berperan sebagai proxy layer yang efisien untuk melindungi kredensial (URL) Apps Script agar tidak bocor ke client-side.
 
 ---
 
-## 7. Apps Script API
+## 8. Apps Script API
 
 **Base URL:** `https://script.google.com/macros/s/{DEPLOYMENT_ID}/exec`
 
-| Action | Query Param | Response |
+| Action Param | Tambahan Query | Output Respon |
 |---|---|---|
-| Metadata kolom | `?action=metadata` | Array kolom + tipe yang terdeteksi |
-| Semua data | `?action=data` | Array rows sebagai JSON objects |
-| Data terfilter | `?action=data&startDate=YYYY-MM-DD&endDate=YYYY-MM-DD` | Rows dalam range |
-| Summary stats | `?action=summary` | Total, today, yesterday, trend, dailyCounts |
-
-### Column Type Detection Logic (server-side, Apps Script)
-Sampling 100 rows pertama per kolom:
-1. Kalau value adalah `Date` object → `timestamp`
-2. Kalau semua numeric + range 1–10 → `scale`
-3. Kalau semua numeric (range bebas) → `numeric`
-4. Kalau unique values ≤ 15 → `categorical`
-5. Else → `text`
+| `metadata` | - | Array kolom beserta hasil deteksi tipe (scale, categorical, dll) |
+| `data` | - | Raw data keseluruhan berformat array of JSON objects |
+| `data` | `startDate`, `endDate` | Return raw data yang khusus terjadi di range tanggal |
+| `summary` | - | Agregat instan: total, hari ini, kemarin, trend, dailyCounts |
 
 ---
 
-## 8. File Structure
+## 9. Security & Privacy
 
-```
+Mengingat konteks data *Pemerintah Nasional*:
+- Akses mutlak tertutup tanpa public sharing / open metrics.
+- Tidak ada rekam jejak PII (Personally Identifiable Information) di cache Next.js yang terbuka secara publik.
+- Variabel rahasia (`APPS_SCRIPT_URL`, `NEXTAUTH_SECRET`) wajib disimpan sepenuhnya pada Vercel Dashboard, bukan di hardcode pada repository.
+
+---
+
+## 10. File Structure
+
+```text
 survey-dashboard/
 ├── PRD.md
-├── package.json
 ├── .env.local.example
 ├── tailwind.config.ts
 ├── tsconfig.json
 │
 ├── apps-script/
-│   └── Code.gs                          # Deploy sebagai Web App di Google Apps Script
+│   └── Code.gs                          # Backend GAS logic (.gs file)
 │
 └── src/
-    ├── middleware.ts                     # Proteksi route /dashboard/*
+    ├── middleware.ts                     # Auth Guard untuk wildcard /dashboard/*
     │
     ├── app/
-    │   ├── page.tsx                      # Redirect → /dashboard
-    │   ├── login/
-    │   │   └── page.tsx                  # Login form
-    │   ├── dashboard/
-    │   │   └── page.tsx                  # Main dashboard
+    │   ├── page.tsx                      # Automatic redirect logic -> /dashboard
+    │   ├── login/page.tsx                # Halaman login estetis
+    │   ├── dashboard/page.tsx            # Frame utama dashboard 
     │   └── api/
-    │       ├── auth/[...nextauth]/
-    │       │   └── route.ts              # NextAuth handler
-    │       └── survey/
-    │           └── route.ts              # Proxy ke Apps Script
+    │       ├── auth/[...nextauth]/route.ts
+    │       └── survey/route.ts           # Proxy handler GAS
     │
     ├── components/
-    │   ├── Header.tsx                    # Top bar + export buttons
-    │   ├── FilterBar.tsx                 # Date range filter
-    │   ├── SummaryCards.tsx              # 4 summary cards
+    │   ├── layout/
+    │   │   ├── Header.tsx                # Logo, Jam, Export, Profil
+    │   │   └── FilterBar.tsx             # Date picker filter global
+    │   ├── dashboard/
+    │   │   └── SummaryCards.tsx          # 4 Executive cards
     │   └── charts/
-    │       ├── ChartWrapper.tsx          # Container + download PNG per chart
-    │       ├── DynamicBarChart.tsx       # Untuk tipe 'scale'
-    │       ├── DynamicPieChart.tsx       # Untuk tipe 'categorical'
-    │       └── DynamicLineChart.tsx      # Untuk tipe 'timestamp' (respons/hari)
+    │       ├── BaseChartCard.tsx         # HOC Wrapper untuk container & logic download
+    │       ├── DynamicBarChart.tsx       # Renderer: `scale` data
+    │       ├── DynamicPieChart.tsx       # Renderer: `categorical` data
+    │       └── DynamicLineChart.tsx      # Renderer: `timestamp` data
     │
-    ├── hooks/
-    │   └── useSurveyData.ts              # Fetch + auto-refresh logic
+    ├── lib/
+    │   ├── apps-script.ts                # Fetch utility
+    │   ├── aggregator.ts                 # Processor data dari API (client-side backup)
+    │   └── exportUtils.ts                # Wrapper html2canvs & jspdf
     │
-    └── lib/
-        └── detectColumnType.ts          # Aggregation helpers (client-side)
+    └── types/
+        └── index.d.ts                    # Global Typescript interfaces
 ```
 
 ---
 
-## 9. Environment Variables
+## 11. Environment Variables
+
+Pastikan variabel-variabel ini selalu dikonfigurasi saat proses setup di `.env.local` atau Cloud Runtime:
 
 ```env
-# .env.local
-NEXTAUTH_SECRET=your-random-secret-min-32-chars
+# URL Dashboard lokal atau production
 NEXTAUTH_URL=http://localhost:3000
 
+# Kunci JWT untuk sesi (Generate via openssl rand -base64 32)
+NEXTAUTH_SECRET=your-random-secret-min-32-chars
+
+# Target web app Google Script Proxy
 APPS_SCRIPT_URL=https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID/exec
 
+# Kredensial Login v1
 SURVEYOR_USERNAME=admin
 SURVEYOR_PASSWORD=your-secure-password
 ```
 
 ---
 
-## 10. Setup Guide
+## 12. Setup Guide
 
-### Google Apps Script
-1. Buka Google Sheet yang terhubung ke Google Form
-2. **Extensions → Apps Script**
-3. Copy-paste isi `apps-script/Code.gs`
-4. **Deploy → New deployment → Web App**
-   - Execute as: **Me**
-   - Who has access: **Anyone** *(URL tetap rahasia karena di-proxy)*
-5. Copy deployment URL → paste ke `.env.local` sebagai `APPS_SCRIPT_URL`
+### 1) Setup Backend (Google Apps Script)
+1. Buka Google Sheet tempat respons data Google Form masuk.
+2. Navigasi: **Extensions (Ekstensi)** → **Apps Script**.
+3. *Copy-paste* isi file `apps-script/Code.gs`.
+4. Pilih **Deploy** → **New deployment** → Pilih type **Web App**.
+   - Execute as: **Me** (Wajib).
+   - Who has access: **Anyone**. (Aman, URL di-proxy oleh backend server Next.js kita).
+5. Salin *URL Deployment* yang baru terbentuk dan simpan sebagai `APPS_SCRIPT_URL`.
 
-### Next.js
+### 2) Setup Frontend (Lokal)
 ```bash
 git clone <repo>
 cd survey-dashboard
+
+# Install dependensi
 npm install
+
+# Setup env
 cp .env.local.example .env.local
-# Edit .env.local sesuai kebutuhan
+# (Edit values di text editor kesayangan Anda)
+
+# Jalankan dev server lokal
 npm run dev
 ```
 
-### Deploy ke Vercel
-1. Push ke GitHub
-2. Import di vercel.com
-3. Set environment variables (sama dengan .env.local)
-4. Deploy
+---
+
+## 13. Out of Scope (v1)
+
+> [!CAUTION]  
+> Untuk menjaga timeline rilis v1, hal-hal berikut ditangguhkan hingga v2:
+
+- **Sistem Role-based Muti-User**: Saat ini menggunakan single-tenant admin access. Di v2 dipertimbangkan penggunaan Auth eksternal seperti Supabase/Firebase.
+- **Data Editing / Management Database**: Dashboard V1 bersifat *Read-Only*. Pengubahan kesalahan isi formulir sepenuhnya harus dari dalam Google Sheet.
+- **WebSocket Streaming**: Refresh time real-time berbasis *Polling* 60 detik dirasa cukup optimal. *Strict Realtime* Web Socket belum diperlukan.
+- **Natural Language Analysis**: Menganalisis opini `text` bebas belum dilakukan. Ini memerlukan integrasi API AI (seperti Gemini/OpenAI).
 
 ---
 
-## 11. Out of Scope (v1)
+## 14. Known Limitations
 
-| Item | Notes |
-|---|---|
-| Multi-user management | v1 hanya 1 akun. v2 bisa pakai Supabase Auth |
-| Edit / hapus respons dari dashboard | Read-only di v1 |
-| WebSocket / SSE real-time | Polling 60s cukup untuk kebutuhan survei |
-| Analisis sentimen teks bebas | Butuh LLM integration, masuk v2 |
-| Role-based access (admin vs viewer) | v2 |
-| Paginasi data besar (>10.000 rows) | Apps Script ada batas 6MB response, perlu pagination di v2 |
-
----
-
-## 12. Known Limitations
-
-- Apps Script response limit **~6MB** → untuk dataset besar (>5000 rows), pertimbangkan paginasi di v2
-- Apps Script **cold start** bisa 2–5 detik untuk request pertama
-- Export PDF kualitasnya tergantung render HTML2Canvas — bukan vector
+> [!WARNING]  
+> - **Limit Kapasitas**: Terdapat batas *payload response* dari Apps Script API maksimal **sekitar 6-10 MB**. Apabila total baris menyentuh puluhan ribu, pagination *mandatory* diaplikasikan di proxy.
+> - **Cold Start**: Respon pemanggilan Apps Script API pertama kalinya (saat belum disentuh lama) berpotensi memakan waktu hingga **2–5 detik**. Request selanjutnya memakan hitungan milidetik.
+> - **Kualitas Export PDF**: Export dirender via Canvas (Raster Graphics), kualitas ketajaman chart yang dizoom secara agresif pada file PDF tidak menyamai kualitas vector-native (*svg*).

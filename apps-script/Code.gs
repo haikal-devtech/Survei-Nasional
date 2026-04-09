@@ -1,220 +1,234 @@
 /**
- * Survey Dashboard — Google Apps Script Backend
- * Deploy sebagai Web App: Execute as Me, Access: Anyone
- *
- * Ganti SHEET_NAME kalau nama sheet-nya bukan default Google Form.
+ * Backend Google Apps Script (Code.gs)
+ * Untuk di-deploy sebagai Web App yang diakses oleh Next.js Proxy
+ * Fitur: Mengambil data dan menghitung agregat Kinerja Surveyor
  */
 
-const SHEET_NAME = 'Form Responses 1';
-const SAMPLE_SIZE = 100; // baris yang di-sample buat detect tipe kolom
-
-// ─── Entry Point ────────────────────────────────────────────────────────────
+const SPREADSHEET_ID = "ISI_DENGAN_ID_SPREADSHEET_ANDA"; 
+const DATA_SHEET = "Form Responses 1";
 
 function doGet(e) {
   const action = e.parameter.action || 'data';
-  const startDate = e.parameter.startDate || null;
-  const endDate = e.parameter.endDate || null;
-
-  let result;
-
   try {
-    switch (action) {
-      case 'metadata': result = getMetadata(); break;
-      case 'summary':  result = getSummary();  break;
-      case 'data':     result = getData(startDate, endDate); break;
-      default:         result = { error: 'Unknown action: ' + action };
+    if (action === "metadata") {
+      return jsonResponse(getMetadata());
+    } else if (action === "data") {
+      return jsonResponse(getData(e.parameter.startDate, e.parameter.endDate));
+    } else if (action === "summary") {
+      return jsonResponse(getSummary());
+    } else if (action === "surveyor_performance") {
+      return jsonResponse(getSurveyorMetrics());
     }
-  } catch (err) {
-    result = { error: err.message };
+    return jsonResponse({ error: "Unknown action" }, 400);
+  } catch (error) {
+    return jsonResponse({ error: error.toString() }, 500);
   }
+}
 
-  return ContentService
-    .createTextOutput(JSON.stringify(result))
+function jsonResponse(data, status = 200) {
+  return ContentService.createTextOutput(JSON.stringify(data))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function getSheet() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  return ss.getSheetByName(SHEET_NAME) || ss.getSheets()[0];
-}
-
-function getHeaders() {
-  const sheet = getSheet();
-  return sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-}
-
-/**
- * Deteksi tipe kolom berdasarkan sample values.
- * Return: 'timestamp' | 'scale' | 'numeric' | 'categorical' | 'text'
- */
-function detectColumnType(values) {
-  const nonEmpty = values.filter(function(v) {
-    return v !== '' && v !== null && v !== undefined;
-  });
-  if (nonEmpty.length === 0) return 'text';
-
-  // Timestamp: Date object atau string yang bisa di-parse sebagai tanggal
-  const first = nonEmpty[0];
-  if (first instanceof Date) return 'timestamp';
-  if (typeof first === 'string' && !isNaN(Date.parse(first)) && first.includes('-')) {
-    return 'timestamp';
-  }
-
-  // Numeric check
-  const allNumeric = nonEmpty.every(function(v) {
-    return !isNaN(Number(v)) && v !== '';
-  });
-
-  if (allNumeric) {
-    const nums = nonEmpty.map(Number);
-    const min = Math.min.apply(null, nums);
-    const max = Math.max.apply(null, nums);
-    // Scale: angka 1–10 dengan range ≤ 9 (misal: 1-5 atau 1-10)
-    if (min >= 1 && max <= 10) return 'scale';
-    return 'numeric';
-  }
-
-  // Categorical: unique values sedikit
-  const uniqueVals = {};
-  nonEmpty.forEach(function(v) { uniqueVals[String(v)] = true; });
-  if (Object.keys(uniqueVals).length <= 15) return 'categorical';
-
-  return 'text';
-}
-
-// ─── Actions ─────────────────────────────────────────────────────────────────
-
-/**
- * Return metadata: info tiap kolom (nama + tipe yang terdeteksi).
- */
-function getMetadata() {
-  const sheet = getSheet();
-  const headers = getHeaders();
-  const lastRow = sheet.getLastRow();
-  const totalRows = Math.max(0, lastRow - 1);
-
-  if (totalRows === 0) {
-    return {
-      columns: headers.map(function(h, i) { return { name: h, type: 'text', index: i }; }),
-      totalRows: 0
-    };
-  }
-
-  const sampleRows = Math.min(totalRows, SAMPLE_SIZE);
-  const sampleData = sheet.getRange(2, 1, sampleRows, headers.length).getValues();
-
-  const columns = headers.map(function(header, idx) {
-    const colValues = sampleData.map(function(row) { return row[idx]; });
-    return {
-      name: header,
-      type: detectColumnType(colValues),
-      index: idx
-    };
-  });
-
-  return {
-    columns: columns,
-    totalRows: totalRows,
-    sheetName: sheet.getName()
-  };
-}
-
-/**
- * Return semua rows sebagai array of objects, dengan optional date filter.
- * Asumsikan kolom pertama (index 0) adalah Timestamp dari Google Form.
- */
-function getData(startDate, endDate) {
-  const sheet = getSheet();
-  const headers = getHeaders();
-  const lastRow = sheet.getLastRow();
-
-  if (lastRow <= 1) return { rows: [], headers: headers };
-
-  const rawData = sheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
-
-  let rows = rawData.map(function(row) {
+function getSheetData() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(DATA_SHEET);
+  if (!sheet) throw new Error("Sheet not found");
+  const data = sheet.getDataRange().getValues();
+  if (data.length === 0) throw new Error("Sheet is empty");
+  
+  const headers = data[0];
+  const rows = [];
+  for (let i = 1; i < data.length; i++) {
     const obj = {};
-    headers.forEach(function(h, i) {
-      const val = row[i];
-      // Serialize Date objects ke ISO string
-      obj[h] = val instanceof Date ? val.toISOString() : val;
+    for (let j = 0; j < headers.length; j++) {
+      obj[headers[j]] = data[i][j];
+    }
+    rows.push(obj);
+  }
+  return { headers, rows };
+}
+
+function detectType(headerName, values) {
+  const lowerHeader = headerName.toLowerCase();
+  
+  if (lowerHeader === 'timestamp' || lowerHeader.includes('tanggal')) return 'timestamp';
+  
+  let isNumeric = true;
+  let uniqueValues = new Set();
+  let nonEmptyCount = 0;
+  
+  for (const v of values) {
+    if (v === '' || v === null || v === undefined) continue;
+    nonEmptyCount++;
+    uniqueValues.add(v);
+    if (isNaN(Number(v))) isNumeric = false;
+  }
+  
+  if (nonEmptyCount === 0) return 'text';
+  
+  const vArr = Array.from(uniqueValues);
+  
+  if (isNumeric && uniqueValues.size <= 10) {
+    const min = Math.min(...vArr.map(Number));
+    const max = Math.max(...vArr.map(Number));
+    if ((min >= 0 && max <= 10) || (min >= 1 && max <= 5)) {
+      return 'scale';
+    }
+  }
+  
+  if (uniqueValues.size < 15 && !isNumeric) return 'categorical';
+  if (uniqueValues.size < 15 && isNumeric) return 'categorical'; 
+  if (isNumeric) return 'numeric';
+  
+  return 'text'; 
+}
+
+function getMetadata() {
+  const { headers, rows } = getSheetData();
+  const columns = [];
+  for (let i = 0; i < headers.length; i++) {
+    const colValues = rows.map(r => r[headers[i]]).slice(0, 100);
+    columns.push({
+      name: headers[i],
+      type: detectType(headers[i], colValues),
+      index: i
     });
-    return obj;
-  });
+  }
+  return { columns, totalRows: rows.length, sheetName: DATA_SHEET };
+}
 
-  // Filter by date range menggunakan kolom pertama (Timestamp)
+function getData(startDate, endDate) {
+  let { rows } = getSheetData();
+  
   if (startDate || endDate) {
-    const tsKey = headers[0];
-    const start = startDate ? new Date(startDate) : null;
-    const end   = endDate   ? new Date(endDate + 'T23:59:59') : null;
+    rows = rows.filter(r => {
+      const tsCol = Object.keys(r).find(k => k.toLowerCase() === 'timestamp');
+      const ts = tsCol ? r[tsCol] : null;
 
-    rows = rows.filter(function(row) {
-      const d = new Date(row[tsKey]);
-      if (isNaN(d.getTime())) return true; // baris tanpa timestamp, jangan difilter
-      if (start && d < start) return false;
-      if (end   && d > end)   return false;
+      if (!ts) return true;
+      const d = new Date(ts);
+      if (startDate && d < new Date(startDate)) return false;
+      if (endDate) {
+        const e = new Date(endDate);
+        e.setDate(e.getDate() + 1);
+        if (d >= e) return false;
+      }
       return true;
     });
   }
-
-  return { rows: rows, headers: headers };
+  return { rows };
 }
 
-/**
- * Return aggregated stats: total responden, hari ini, kemarin, trend, dan
- * dailyCounts (responden per hari untuk 30 hari terakhir).
- */
 function getSummary() {
-  const sheet = getSheet();
-  const headers = getHeaders();
-  const lastRow = sheet.getLastRow();
+  const { rows } = getSheetData();
+  const total = rows.length;
+  
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  
+  let countToday = 0;
+  let countYesterday = 0;
+  const dailyCountsMap = {};
+  
+  for (const r of rows) {
+    const tsCol = Object.keys(r).find(k => k.toLowerCase() === 'timestamp');
+    const ts = tsCol ? r[tsCol] : null;
 
-  if (lastRow <= 1) {
-    return { total: 0, today: 0, yesterday: 0, trend: null, dailyCounts: [] };
+    if (!ts) continue;
+    const d = new Date(ts);
+    if(isNaN(d.getTime())) continue;
+    
+    // daily 
+    const dateKey = d.toISOString().split('T')[0];
+    dailyCountsMap[dateKey] = (dailyCountsMap[dateKey] || 0) + 1;
+    
+    // today / yesterday check
+    const dDate = new Date(d);
+    dDate.setHours(0,0,0,0);
+    if (dDate.getTime() === today.getTime()) countToday++;
+    if (dDate.getTime() === yesterday.getTime()) countYesterday++;
+  }
+  
+  let trend = null;
+  if (countYesterday > 0) {
+    trend = ((countToday - countYesterday) / countYesterday) * 100;
+  } else if (countToday > 0) {
+    trend = 100; 
+  } else {
+    trend = 0;
+  }
+  
+  const dailyCounts = Object.keys(dailyCountsMap).sort().map(k => ({
+    date: k, count: dailyCountsMap[k]
+  }));
+  
+  return {
+    total, today: countToday, yesterday: countYesterday, trend, dailyCounts
+  };
+}
+
+function getSurveyorMetrics() {
+  const { headers, rows } = getSheetData();
+  
+  const timestampCol = headers.find(h => h.toString().toLowerCase().includes('timestamp'));
+  const surveyorCol = headers.find(h => h.toString().toLowerCase().includes('nama surveyor') || h.toString().toLowerCase() === 'surveyor');
+
+  if (!surveyorCol) {
+    return { error: "Kolom Nama Surveyor tidak ditemukan di sheet. Pastikan kuesioner memiliki input nama surveyor." };
   }
 
-  const rawData = sheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
+  let surveyorMap = {}; 
 
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const yesterdayStart = new Date(todayStart);
-  yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const surveyorName = row[surveyorCol]?.toString().trim() || "Anonim";
+    const timestampVal = timestampCol ? row[timestampCol] : null;
+    const timestamp = timestampVal ? new Date(timestampVal) : null;
 
-  let todayCount = 0;
-  let yesterdayCount = 0;
-  const dailyCounts = {};
+    if (!surveyorMap[surveyorName]) {
+      surveyorMap[surveyorName] = { 
+        nama: surveyorName, 
+        total: 1, 
+        lastActive: timestamp 
+      };
+    } else {
+      surveyorMap[surveyorName].total += 1;
+      if (timestamp && surveyorMap[surveyorName].lastActive) {
+        if (timestamp > surveyorMap[surveyorName].lastActive) {
+          surveyorMap[surveyorName].lastActive = timestamp;
+        }
+      } else if (timestamp) {
+        surveyorMap[surveyorName].lastActive = timestamp;
+      }
+    }
+  }
 
-  rawData.forEach(function(row) {
-    const rawTs = row[0];
-    const ts = rawTs instanceof Date ? rawTs : new Date(rawTs);
-    if (isNaN(ts.getTime())) return;
-
-    const dayStart = new Date(ts.getFullYear(), ts.getMonth(), ts.getDate());
-
-    if (dayStart.getTime() === todayStart.getTime())     todayCount++;
-    if (dayStart.getTime() === yesterdayStart.getTime()) yesterdayCount++;
-
-    const dayKey = ts.toISOString().split('T')[0];
-    dailyCounts[dayKey] = (dailyCounts[dayKey] || 0) + 1;
+  let results = Object.values(surveyorMap);
+  results.sort((a, b) => b.total - a.total);
+  
+  // Format dates
+  results = results.map(r => {
+    if (r.lastActive) {
+        const d = new Date(r.lastActive);
+        if(!isNaN(d.getTime())) {
+            const pad = (n) => n.toString().padStart(2, '0');
+            r.lastActive = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        } else {
+            r.lastActive = "-";
+        }
+    } else {
+        r.lastActive = "-";
+    }
+    r.status = "Active"; 
+    return r;
   });
 
-  const trend = yesterdayCount > 0
-    ? Number(((todayCount - yesterdayCount) / yesterdayCount * 100).toFixed(1))
-    : null;
-
-  // Sort dailyCounts, ambil 30 hari terakhir
-  const sortedDailyCounts = Object.keys(dailyCounts)
-    .sort()
-    .slice(-30)
-    .map(function(date) { return { date: date, count: dailyCounts[date] }; });
-
   return {
-    total: lastRow - 1,
-    today: todayCount,
-    yesterday: yesterdayCount,
-    trend: trend,
-    dailyCounts: sortedDailyCounts
+    success: true,
+    total_surveyors: results.length,
+    data: results
   };
 }

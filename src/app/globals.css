@@ -2,23 +2,33 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Scrollbar dark */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: #111111;
-}
-::-webkit-scrollbar-thumb {
-  background: #2a2a2a;
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #3a3a3a;
+:root {
+  --ink: #060911;
+  --txt: #ECF0FA;
 }
 
-/* Date input dark mode */
-input[type='date']::-webkit-calendar-picker-indicator {
-  filter: invert(0.4);
+body {
+  background: var(--ink);
+  color: var(--txt);
+  min-height: 100vh;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    radial-gradient(ellipse 70% 60% at 15% 10%, rgba(140, 21, 21, 0.08) 0%, transparent 65%),
+    radial-gradient(ellipse 50% 50% at 85% 90%, rgba(10, 56, 112, 0.07) 0%, transparent 60%),
+    radial-gradient(ellipse 40% 40% at 50% 50%, rgba(14, 96, 64, 0.04) 0%, transparent 55%);
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }

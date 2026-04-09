@@ -18,6 +18,7 @@ import ChartWrapper from '@/components/charts/ChartWrapper';
 import DynamicBarChart  from '@/components/charts/DynamicBarChart';
 import DynamicPieChart  from '@/components/charts/DynamicPieChart';
 import DynamicLineChart from '@/components/charts/DynamicLineChart';
+import SurveyorPanel    from '@/components/dashboard/SurveyorPanel';
 
 // ─── Skeleton loader ────────────────────────────────────────────────────────
 
@@ -167,6 +168,9 @@ export default function DashboardPage() {
             <DynamicLineChart data={summary.dailyCounts} />
           </ChartWrapper>
         )}
+
+        {/* Surveyor Panel */}
+        <SurveyorPanel />
 
         {/* Chart grid — kolom selain timestamp */}
         {loading && !metadata ? (
